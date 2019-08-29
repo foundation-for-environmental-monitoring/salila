@@ -21,9 +21,7 @@ import os.path
 def make_train_test ( tag ) :
     csv_file =  tag # + '.csv'
     print (csv_file)
-    if not os.path.isfile(csv_file):
-      urllib.request.urlretrieve ('https://storage.googleapis.com/salila/' + csv_file , csv_file) 
- 
+
     df = pd.read_csv(csv_file)
     label = df['Label']
     le = preprocessing.LabelEncoder()
@@ -34,7 +32,7 @@ def make_train_test ( tag ) :
     x_train, x_test, y_train, y_test = train_test_split(df, le_label, test_size=0.3)
     print ( 'x_train:%s, x_test:%s, y_train:%s, y_test:%s' % (x_train.shape, x_test.shape, y_train.shape, y_test.shape))
     return x_train, x_test, y_train, y_test, num_classes, le, le_label , csv_file
-    
+
 def make_model (x_train, x_test, y_train, y_test, num_classes) :
     model = Sequential()
     model.add(Dense(512, activation='relu', input_shape=(3,)))
@@ -52,20 +50,20 @@ def make_model (x_train, x_test, y_train, y_test, num_classes) :
     print('Test loss:', score[0])
     print('Test accuracy:', score[1])
     return model
-  
+
 def save_model ( model, tag) :
     json_file = tag + '.json'
     h5_file = tag + '.h5'
-    
+
     model_json = model.to_json()
     with open(json_file , "w") as _json_file:
         _json_file.write(model_json)
-        
+
     # serialize weights to HDF5
     model.save_weights( h5_file)
     print("Saved %s and %s to disk" % (json_file, h5_file) )
     return model, json_file , h5_file
-  
+
 def do_predict_slice (model, slice = None) :
     if not slice:
       slice = x_test.iloc[0:1,:]
@@ -90,20 +88,19 @@ def do_predict ( model, le, r, g, b):
     y_pred_idx = [pd.Series(elem).idxmax() for elem in ans]
     y_pred = [ le.classes_[n] for n in y_pred_idx]
 
-    return y_pred, sample_df  
-  
+    return y_pred, sample_df
+
 def salila_ml (tag, r, g, b) :
-    x_train, x_test, y_train, y_test, num_classes, le, le_label , csv_file = make_train_test (tag ) 
-    model = make_model ( x_train, x_test, y_train, y_test, num_classes ) 
-    model, json_file, h5_file = save_model ( model, tag )  
-    
+    x_train, x_test, y_train, y_test, num_classes, le, le_label , csv_file = make_train_test (tag )
+    model = make_model ( x_train, x_test, y_train, y_test, num_classes )
+    model, json_file, h5_file = save_model ( model, tag )
+
     y_pred , x_instance = do_predict (model, le, r, g, b)
 
     return y_pred, x_instance
 
-if __name__ == '__main__' :  
-    y_pred, x_instance = salila_ml('./ph_colors.csv' , 45, 117, 103)
-    print (x_instance, y_pred ) ; print("=======")
-    y_pred, x_instance = salila_ml('./ph_colors.csv' , 131, 149, 156)
-    print (x_instance, y_pred ) ; print("=======")
-
+# if __name__ == '__main__' :
+#     y_pred, x_instance = salila_ml('../Fluoride_colors.csv' , 45, 117, 103)
+#     print (x_instance, y_pred ) ; print("=======")
+#     y_pred, x_instance = salila_ml('../Fluoride_colors.csv' , 131, 149, 156)
+#     print (x_instance, y_pred ) ; print("=======")

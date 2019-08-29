@@ -1,4 +1,4 @@
-# salila
+#Salila
 Salila #Impactathon - #CodeForCause
 
 1. Install Anaconda (with python 3.7)
@@ -8,17 +8,16 @@ Salila #Impactathon - #CodeForCause
 
    `source activate base`
 
-3. Install missing libraries
+3. Install libraries
 
    `pip install opencv-python`
    `pip install imutils`
    `pip install keras`
 
+4. Try via commandline
 
-4. Try out the code via commandline
+   `python extract_colors.py -i phBottle.jpg -n pH`
 
-   `python get_color_grids.py -i phBottle.jpg -n pH`
-
-5. Start server through
+5. Start server
 
    `python server.py`

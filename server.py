@@ -1,22 +1,41 @@
-from flask import Flask, url_for, send_from_directory, request
+from flask import Flask, url_for, send_from_directory, request, abort
 import logging, os
 import datetime
 from werkzeug import secure_filename
-from get_color_grids import process_image
-from salila import salila_nn
 import time
+import boto3
+import json
+import redis
+import decimal
+import hashlib
+from rq import Queue
+
+from salila.analyze import analyse_task
+from salila.extract_colors import process_image
+from salila import predict_result
 
 app = Flask(__name__)
-file_handler = logging.FileHandler('server.log')
+file_handler = logging.FileHandler('log/server.log')
 app.logger.addHandler(file_handler)
 app.logger.setLevel(logging.INFO)
 
 PROJECT_HOME = os.path.dirname(os.path.realpath(__file__))
 UPLOAD_FOLDER = '{}/uploads/'.format(PROJECT_HOME)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+LOG_FOLDER = '{}/log/'.format(PROJECT_HOME)
 
-lst = ["test"]
-del lst[0]
+r = redis.Redis()
+q = Queue(connection=r)
+
+# Helper class to convert a DynamoDB item to JSON.
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, decimal.Decimal):
+            if o % 1 > 0:
+                return float(o)
+            else:
+                return int(o)
+        return super(DecimalEncoder, self).default(o)
 
 def create_new_folder(local_dir):
     newpath = local_dir
@@ -24,15 +43,28 @@ def create_new_folder(local_dir):
         os.makedirs(newpath)
     return newpath
 
-@app.route('/csv', methods = ['GET'])
-def csv():
-    str = "time,file,test,r,g,b,label"
-    for line in lst:
-        str += '\n'
-        str += line
-    return str
+@app.route('/result', methods = ['GET'])
+def result():
+    dynamodb = boto3.resource('dynamodb', region_name='ap-south-1')
+    table = dynamodb.Table('test_details')
 
-@app.route('/<path:path>')
+    id  = request.args.get('id', "0")
+    response = table.get_item(
+       Key = {
+            'TestRunId': id
+        }
+    )
+
+    try:
+        return json.dumps(response['Item'], indent=4, cls=DecimalEncoder)
+    except:
+        return f'{{ "TestRunId": "{id}", "result": "-", "message": "Error", "title": "Fluoride" }}'
+
+def create_table():
+    # Get the service resource.
+    dynamodb = boto3.resource('dynamodb', region_name='ap-south-1')
+
+#@app.route('/<path:path>')
 def get_resource(path):  # pragma: no cover
     mimetypes = {
         ".css": "text/css",
@@ -47,45 +79,57 @@ def get_resource(path):  # pragma: no cover
 
 @app.route('/', methods = ['POST'])
 def api_root():
-    app.logger.info(PROJECT_HOME)
     if request.method == 'POST' and request.files['image']:
-        app.logger.info(app.config['UPLOAD_FOLDER'])
         img = request.files['image']
+        test_id = request.form['testId']
+        version_code = request.form['versionCode']
+        sdk_version = request.form['sdkVersion']
+        device_model = request.form['deviceModel']
+        md5 = request.form['md5']
         img_name = secure_filename(img.filename)
         create_new_folder(app.config['UPLOAD_FOLDER'])
         saved_path = os.path.join(app.config['UPLOAD_FOLDER'], img_name)
-        app.logger.info("saving {}".format(saved_path))
+        app.logger.info("saving {}".format(img_name))
         img.save(saved_path)
-        if True :  # try:
-          #app.logger.info('img_name:%s' % (img_name))
-          test_name = img_name[img_name.rfind('_')+1:].replace('.jpg','')
-          app.logger.info(' test_name:%s , img_name:%s , saved_name:%s' % (test_name, img_name, saved_path))
-          r,g,b,out_file = process_image(saved_path, test_name)
-          app.logger.info('outfile: %s' % out_file)
-          y_pred, x_instance = salila_nn.salila_ml(out_file,r,g,b)
-          app.logger.info('x_instance: %s' % x_instance)
-          app.logger.info('y_pred: %s' % y_pred)
-          tx = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-          #f=open('tranlog.csv', 'a')
-          #f.write(datetime.datetime.now() + "," + img_name + "," + test_name + "," + y_pred)
-          #f.close()
 
-          lst.insert(0, ",".join([tx, img_name, test_name, str(r), str(g) ,str(b) , y_pred[0]  ]) )
+        hasher = hashlib.md5()
+        with open(saved_path, 'rb') as afile:
+            buf = afile.read()
+            hasher.update(buf)
 
-          with open("tranlog.csv", "a") as myfile:
-              myfile.write(",".join([tx, img_name, test_name, str(r), str(g) ,str(b) , y_pred[0]  ])); myfile.write("\n")
-        else : #except:
-          pass
+        if md5 == hasher.hexdigest():
+            tx = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+            test_name = img_name[img_name.rfind('_')+1:].replace('.jpg','')
 
-        return send_from_directory(app.config['UPLOAD_FOLDER'],img_name, as_attachment=True)
+            dynamodb = boto3.resource('dynamodb', region_name='ap-south-1')
+            table = dynamodb.Table('test_details')
+            message =  'Analyzing'
+            response = table.put_item(
+            Item = {
+                    'TestRunId': test_id,
+                    'date': int(time.time_ns() * 0.000001),
+                    'image': img_name,
+                    'title': test_name,
+                    'message': message,
+                    'appVersion': version_code,
+                    'sdk': sdk_version,
+                    'model': device_model
+                }
+            )
+
+            job = q.enqueue(analyse_task, img_name, saved_path, test_id)
+            return f"task {job.id} at {job.enqueued_at}"
+
+        return abort(400)
     else:
         return "Where is the image?"
 
 if __name__ == '__main__':
-    f = open('tranlog.csv', 'a')
-    f.close()
-    f = open("tranlog.csv", "r")
-    for line in f:
-        lst.insert(0, line)
-    f.close()
+    create_table()
+
+    create_new_folder(LOG_FOLDER)
+    if not os.path.isfile('results.csv'):
+        f = open('log/results.csv', 'a')
+        f.close()
+    
     app.run(host='0.0.0.0', debug=False)

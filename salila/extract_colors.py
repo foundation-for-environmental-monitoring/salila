@@ -1,11 +1,13 @@
 #!/usr/bin/python
-# import the necessary packages
 import numpy as np
 import argparse
 import imutils
 import cv2
 import math
-from salila import salila_nn
+
+from salila import predict_result
+
+labels = {"Fluoride" : {1:0, 22:1, 19:2, 2:0, 20:2, 23:1, 3:1.5, 6:0.5, 24:0, 4:1.5, 7:0.5, 25:0, 16:1.5, 13:0, 10:1, 21:2, 18:0.5, 15:1.5, 5:0.5, 8:2, 11:1, 12:-1, 17:-1, 9:-1, 14:-1}, "pH" : {1:10, 22:10, 19:10, 2:5, 20:5, 23:5, 3:9, 6:9, 24:9, 4:4, 7:4, 25:4, 16:7, 13:7, 10:7, 21:6, 18:6, 15:6, 5:8, 8:8, 11:8, 12:-1, 17:-1, 9:-1, 14:-1}, "Phosphate" : {1:0.6, 2:0.6, 3:0.6, 4:0.6, 5:0.6, 6:0.9, 7:0.9, 8:0.9, 9:0.9, 10:0.9, 11:1.2, 12:1.2, 13:1.2, 14:1.2, 15:1.2, 16:1.5, 17:1.5, 18:1.5, 19:1.5, 20:1.5, 21:2.0, 22:2.0, 23:2.0, 24:2.0, 25:2.0}}
 
 #Reorder coordinates in a cyclic order
 def re_order_points(pts):
@@ -16,7 +18,7 @@ def re_order_points(pts):
 	diff = np.diff(pts, axis = 1)
 	rect[1] = pts[np.argmin(diff)]
 	rect[3] = pts[np.argmax(diff)]
- 
+
 	return rect
 
 def get_warped_image(image, pts):
@@ -42,11 +44,18 @@ def get_warped_image(image, pts):
  
 	return warped
 
-labels = {"pH" : {1:10, 22:10, 19:10, 2:5, 20:5, 23:5, 3:9, 6:9, 24:9, 4:4, 7:4, 25:4, 16:7, 13:7, 10:7, 21:6, 18:6, 15:6, 5:8, 8:8, 11:8, 12:-1, 17:-1, 9:-1, 14:-1}, "Phosphate" : {1:0.6, 2:0.6, 3:0.6, 4:0.6, 5:0.6, 6:0.9, 7:0.9, 8:0.9, 9:0.9, 10:0.9, 11:1.2, 12:1.2, 13:1.2, 14:1.2, 15:1.2, 16:1.5, 17:1.5, 18:1.5, 19:1.5, 20:1.5, 21:2.0, 22:2.0, 23:2.0, 24:2.0, 25:2.0}}
-
 def process_image(filename, test, show = False, debug = False):
-    image = cv2.imread(filename)
+    with open(filename, 'rb') as f:
+        check_chars = f.read()[-2:]
+
+    if check_chars != b'\xff\xd9':
+            print('Corrupt image')
+            return 0,0,0,""
+    else:
+        image = cv2.imread(filename)
+
     img = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    height, width = img.shape
 
     # Incoming image is roughly 2k px wide and is cropped roughly to include only the bar codes, left & right grids & inner bottle area
     # Try and extract the left grid and right grid from the image
@@ -64,7 +73,7 @@ def process_image(filename, test, show = False, debug = False):
     f.write("R,G,B,Label\n")
     for cnt in contours:
         #Throw out any contours that are small or too big. We are only interested in large enough squares
-        if cv2.arcLength(cnt,True) < 1000 or cv2.arcLength(cnt, True) > 5000:
+        if cv2.arcLength(cnt,True) < width/2  or cv2.arcLength(cnt, True) > 5000:
             continue
         approx = cv2.approxPolyDP(cnt, 0.08*cv2.arcLength(cnt, True), True)
         x, y, w, h = cv2.boundingRect(approx)
@@ -91,7 +100,7 @@ def process_image(filename, test, show = False, debug = False):
             rsum = 0
             count = 0
             for ic in innerc:
-                if cv2.arcLength(ic,True) > 1000 or cv2.arcLength(ic,True) < 200:
+                if cv2.arcLength(ic,True) > 1000 or cv2.arcLength(ic,True) < 130:
                     continue
                 innera = cv2.approxPolyDP(ic, 0.08*cv2.arcLength(ic, True), True)
                 xin, yin, win, hin = cv2.boundingRect(innera)
@@ -180,8 +189,11 @@ def process_image(filename, test, show = False, debug = False):
         cv2.imshow("img", image)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
-    return int(rs/cnt), int(gs/cnt), int(bs/cnt), out
 
+    if cnt == 0:
+       return 0,0,0,''
+
+    return int(rs/cnt), int(gs/cnt), int(bs/cnt), out
 
 def xmain():
     ap = argparse.ArgumentParser()
@@ -195,7 +207,7 @@ def xmain():
     show = True if args["show"] == None else args["show"] == 'True'
     r,g,b,out_file = process_image(args["image"], args["name"], show, True)
     print (r, g, b, out_file) 
-    print (salila_nn.salila_ml(out_file,r,g,b))
+    print (predict_result.salila_ml(out_file,r,g,b))
 
 if __name__== "__main__":
     xmain()
