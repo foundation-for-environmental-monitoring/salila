@@ -7,7 +7,7 @@ import math
 
 from salila import predict_result
 
-labels = {"Fluoride" : {1:0, 22:1, 19:2, 2:0, 20:2, 23:1, 3:1.5, 6:0.5, 24:0, 4:1.5, 7:0.5, 25:0, 16:1.5, 13:0, 10:1, 21:2, 18:0.5, 15:1.5, 5:0.5, 8:2, 11:1, 12:-1, 17:-1, 9:-1, 14:-1}, "pH" : {1:10, 22:10, 19:10, 2:5, 20:5, 23:5, 3:9, 6:9, 24:9, 4:4, 7:4, 25:4, 16:7, 13:7, 10:7, 21:6, 18:6, 15:6, 5:8, 8:8, 11:8, 12:-1, 17:-1, 9:-1, 14:-1}, "Phosphate" : {1:0.6, 2:0.6, 3:0.6, 4:0.6, 5:0.6, 6:0.9, 7:0.9, 8:0.9, 9:0.9, 10:0.9, 11:1.2, 12:1.2, 13:1.2, 14:1.2, 15:1.2, 16:1.5, 17:1.5, 18:1.5, 19:1.5, 20:1.5, 21:2.0, 22:2.0, 23:2.0, 24:2.0, 25:2.0}}
+labels = {"Fluoride" : {1:0, 2:0.5, 3:1, 4:1.5, 5:2, 6:0, 7:0.5, 8:1, 9:1.5, 10:2}, "pH" : {1:4, 2:5, 3:6, 4:7, 5:8, 6:9, 7:10, 8:4, 9:5, 10:6, 11:7, 12:8, 13:9, 14:10}}
 
 #Reorder coordinates in a cyclic order
 def re_order_points(pts):
@@ -45,9 +45,11 @@ def get_warped_image(image, pts):
 	return warped
 
 def process_image(filename, test, show = False, debug = False):
+
     with open(filename, 'rb') as f:
         check_chars = f.read()[-2:]
 
+    # https://stackoverflow.com/questions/33548956/detect-avoid-premature-end-of-jpeg-in-cv2-python
     if check_chars != b'\xff\xd9':
             print('Corrupt image')
             return 0,0,0,""
@@ -55,15 +57,35 @@ def process_image(filename, test, show = False, debug = False):
         image = cv2.imread(filename)
 
     img = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    height, width = img.shape
+
+    # if show:
+    #     cv2.imshow("img", img)
+    #     cv2.waitKey(0)
+    #     cv2.destroyAllWindows()
 
     # Incoming image is roughly 2k px wide and is cropped roughly to include only the bar codes, left & right grids & inner bottle area
     # Try and extract the left grid and right grid from the image
     img = cv2.medianBlur(img,1)
-    threshold = cv2.adaptiveThreshold(img,255,cv2.ADAPTIVE_THRESH_MEAN_C,\
-                cv2.THRESH_BINARY,11,2)
-    contours, _=cv2.findContours(threshold, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    dst = cv2.medianBlur(img,1)
+
+    if show:
+        cv2.imshow("img", img)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+    threshold = cv2.adaptiveThreshold(img,255,cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY,11,2, dst)
+
+    if show:
+        cv2.imshow("img", dst)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+    # print (threshold)
+
+    contours, _ = cv2.findContours(threshold, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
      
+    # print (contours)
+
     i = 0
     bottle_enclosure_area = 100000000
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -71,18 +93,43 @@ def process_image(filename, test, show = False, debug = False):
     out = test + "_colors.csv"
     f = open(out, "w")
     f.write("R,G,B,Label\n")
+
+    height, width = img.shape
+    print(f'Image width: {width}')
+
     for cnt in contours:
-        #Throw out any contours that are small or too big. We are only interested in large enough squares
-        if cv2.arcLength(cnt,True) < width/2  or cv2.arcLength(cnt, True) > 5000:
+
+        # print(f"cnt arcLength: {cv2.arcLength(cnt, True)}")
+
+        #Ignore too small contours
+        if cv2.arcLength(cnt,True) < 800 or cv2.arcLength(cnt,True) > 5000:
             continue
-        approx = cv2.approxPolyDP(cnt, 0.08*cv2.arcLength(cnt, True), True)
+
+        print(f"cnt arcLength: {cv2.arcLength(cnt, True)}")
+
+        approx = cv2.approxPolyDP(cnt, 0.01*cv2.arcLength(cnt, True), True)
         x, y, w, h = cv2.boundingRect(approx)
         ar = w / float(h)
+
+        if show:
+            print (f"x: {x}")
+            print (f"y: {y}")
+            print (f"w: {w}")
+            print (f"h: {h}")
+            print (f"ar: {ar}")
+            print("----------------")
+
         #Drop the contours that are not squares, not four-sided and criss-crossed
         #This should roughly be the left and right outer contours.
-        if w > image.shape[1] / 4 and len(approx) == 4 and ar >= 0.8 and ar <= 1.2 \
-                and cv2.pointPolygonTest(cnt, (x + w / 2, y + h / 2), False) > 0  \
-                and cv2.pointPolygonTest(cnt, (x + w / 3, y + h * 2 / 3), False) > 0:
+        if len(approx) == 4 and ar <= 0.22:
+
+            # if show:
+            #     draw_contour = cv2.drawContours(img, [cnt], -1, (255, 140, 240), 2)
+            #     cv2.imshow("Contour " + str(cv2.arcLength(cnt,True)), img)
+            #     cv2.waitKey(0)
+            #     cv2.destroyAllWindows()
+
+            print ("countours ok")
             pts = np.zeros((4, 2), dtype = "float32")
             for idx in range(4):
                 pts[idx] = approx[idx]
@@ -90,9 +137,8 @@ def process_image(filename, test, show = False, debug = False):
             #Assuming that these are the outer grids, we can apply binary threshold
             #to get the inner grids
             xxx = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
-            thresh1 = cv2.adaptiveThreshold(xxx,255,cv2.ADAPTIVE_THRESH_MEAN_C,\
-                cv2.THRESH_BINARY,11,2)
-            innerc, _=cv2.findContours(thresh1, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+            thresh1 = cv2.adaptiveThreshold(xxx, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY,11,2)
+            innerc, _ = cv2.findContours(thresh1, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
             yes = {0}
             xes = {0}
             xes.remove(0)
@@ -100,8 +146,10 @@ def process_image(filename, test, show = False, debug = False):
             rsum = 0
             count = 0
             for ic in innerc:
-                if cv2.arcLength(ic,True) > 1000 or cv2.arcLength(ic,True) < 130:
+                
+                if cv2.arcLength(ic,True) > 500 or cv2.arcLength(ic,True) < 350:
                     continue
+
                 innera = cv2.approxPolyDP(ic, 0.08*cv2.arcLength(ic, True), True)
                 xin, yin, win, hin = cv2.boundingRect(innera)
                 arin = win / float(hin)
@@ -110,9 +158,16 @@ def process_image(filename, test, show = False, debug = False):
                 #located, we can cluster the centroids and identify general x-coord of each column 
                 # and similarly identify the general y-coord of each row. Using which we can locate
                 # all the 25 (x,y) of the inner grids
-                if len(innera) == 4 and arin >= 0.8 and arin <= 1.2 \
+                if len(innera) == 4 \
                         and cv2.pointPolygonTest(ic, (xin + win / 2, yin + hin / 2), False) > 0  \
                         and cv2.pointPolygonTest(ic, (xin + win / 3, yin + hin * 2 / 3), False) > 0:
+
+                    if show:
+                        draw_contour = cv2.drawContours(warped, [ic], -1, (255, 140, 240), 2)
+                        cv2.imshow("Inner " + str(cv2.arcLength(ic,True)), warped)
+                        cv2.waitKey(0)
+                        cv2.destroyAllWindows()
+
                     (cx, cy), radius = cv2.minEnclosingCircle(ic)
                     rsum += radius
                     count += 1
@@ -154,26 +209,39 @@ def process_image(filename, test, show = False, debug = False):
                             f.write(str(warped[xcoord][ycoord][2]) + "," +  str(warped[xcoord][ycoord][1]) + "," + str(warped[xcoord][ycoord][0]) + "," + test + str(labels[test][xpos]) + '\n')
                     xpos+=1
             if show:
+                # Show grid with values for each box
                 cv2.imshow("Warped" + str(i), warped)
+                # print(f'Warped: {warped[xcoord][ycoord][2]}')
             i = i + 1
         else:
            #These are large enough polygons, but not the left and right grids, let us identify the bottle
            #enclosure and pick that
+           
+           if show:
+                print (x)
+                print(f'Bottle area: {bottle_enclosure_area}')
+                print(f'Contour area: {cv2.contourArea(cnt)}')
+                print(len(approx))
+                print(image.shape[1]/3)
+
            if bottle_enclosure_area > cv2.contourArea(cnt) and len(approx) == 4 and x > image.shape[1]/3:
                inner_approx = approx
                bottle_enclosure_area = cv2.contourArea(cnt)
    
     ex, ey, ew, eh = cv2.boundingRect(inner_approx)
-    
+
+    print ('--------------------------------------')
+
     ex = int(ex + ew / 3)
     ey = int(ey + eh / 2)
     ew = int(ew/3)
     eh = int(eh/4)   
     
-    cnt = 0
+    cnt = 1
     rs = 0
     gs = 0
     bs = 0
+
     for bxcoord in range(ex, ex+ew):
         for bycoord in range(ey, ey+eh):
             cnt+=1
@@ -182,16 +250,13 @@ def process_image(filename, test, show = False, debug = False):
             bs+=image[bycoord][bxcoord][0]
 
     if debug and show:
-        cv2.rectangle(image, (ex, ey), (ex+ew, ey+eh), (255, 255, 255), 0)    
+        cv2.rectangle(image, (ex, ey), (ex+ew, ey+eh), (0, 0, 0), 0)
  
     f.close()
     if show:
         cv2.imshow("img", image)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
-
-    if cnt == 0:
-       return 0,0,0,''
 
     return int(rs/cnt), int(gs/cnt), int(bs/cnt), out
 
